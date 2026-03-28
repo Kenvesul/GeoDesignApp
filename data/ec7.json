@@ -1,0 +1,93 @@
+{
+  "_comment": "EC7 EN 1997-1:2004 partial factor sets. All values dimensionless.",
+  "_reference": "EN 1997-1:2004 Annex A, Tables A.3 (Actions), A.4 (Materials), A.5 (Resistance)",
+
+  "actions": {
+    "_comment": "Action partial factors gamma_G and gamma_Q (Table A.3)",
+    "A1": {
+      "_label": "Set A1 — used in Combination 1 (paired with M1)",
+      "gamma_G_unfav": 1.35,
+      "gamma_G_fav":   1.00,
+      "gamma_Q_unfav": 1.50,
+      "gamma_Q_fav":   0.00
+    },
+    "A2": {
+      "_label": "Set A2 — used in Combination 2 (paired with M2)",
+      "gamma_G_unfav": 1.00,
+      "gamma_G_fav":   1.00,
+      "gamma_Q_unfav": 1.30,
+      "gamma_Q_fav":   0.00
+    }
+  },
+
+  "materials": {
+    "_comment": "Material partial factors gamma_M (Table A.4)",
+    "M1": {
+      "_label": "Set M1 — used in Combination 1 (no material factoring)",
+      "gamma_phi": 1.00,
+      "gamma_c":   1.00,
+      "gamma_cu":  1.00,
+      "gamma_qu":  1.00,
+      "gamma_gamma": 1.00
+    },
+    "M2": {
+      "_label": "Set M2 — used in Combination 2 (material strength reduced)",
+      "gamma_phi": 1.25,
+      "gamma_c":   1.25,
+      "gamma_cu":  1.40,
+      "gamma_qu":  1.40,
+      "gamma_gamma": 1.00
+    }
+  },
+
+  "resistance": {
+    "_comment": "Resistance partial factors gamma_R (Table A.5)",
+
+    "R1": {
+      "_label": "Set R1 — used with DA1 and DA3",
+      "bearing":      1.00,
+      "sliding":      1.00,
+      "earth_pressure":1.00
+    },
+    "R2": {
+      "_label": "Set R2 — used with DA2",
+      "bearing":      1.40,
+      "sliding":      1.10,
+      "earth_pressure":1.40
+    },
+    "R3": {
+      "_label": "Set R3 — used with DA3",
+      "bearing":      1.00,
+      "sliding":      1.00,
+      "earth_pressure":1.00
+    }
+  },
+
+  "design_approaches": {
+    "_comment": "EC7 Design Approach combinations (Section 2.4.7.3)",
+    "DA1": {
+      "combination_1": {"actions": "A1", "materials": "M1", "resistance": "R1"},
+      "combination_2": {"actions": "A2", "materials": "M2", "resistance": "R1"}
+    },
+    "DA2": {
+      "combination_1": {"actions": "A1", "materials": "M1", "resistance": "R2"}
+    },
+    "DA3": {
+      "combination_1": {
+        "actions_structural": "A1",
+        "actions_geotechnical": "A2",
+        "materials": "M2",
+        "resistance": "R3"
+      }
+    }
+  },
+
+  "sls_limits": {
+    "_comment": "Indicative serviceability limits. EC7 Table A.2 / CIRIA C580.",
+    "_units": "metres",
+    "isolated_foundation_total":      0.025,
+    "isolated_foundation_differential_ratio": 0.0033,
+    "raft_foundation_total":           0.050,
+    "raft_foundation_differential_ratio": 0.0020
+  }
+}

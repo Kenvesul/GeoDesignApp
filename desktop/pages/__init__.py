@@ -1,0 +1,2 @@
+"""Desktop pages for DesignApp."""
+

@@ -1,0 +1,8 @@
+# Development / test dependencies
+# Install with: pip install -r requirements-dev.txt
+
+pytest>=8.0
+pytest-cov>=5.0
+playwright>=1.44       # E2E tests: npx playwright install chromium
+pytest-qt>=4.4         # Desktop UI smoke tests
+pyslope>=1.4.0         # Cross-check slope search against pySlope (PyPI latest seen Mar 2026)

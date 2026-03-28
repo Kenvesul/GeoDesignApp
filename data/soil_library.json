@@ -1,0 +1,116 @@
+{
+  "_comment": "Named soil presets for DesignApp. Values are CHARACTERISTIC (unfactored).",
+  "_reference": "Craig's Soil Mechanics 9th ed. App. B; Eurocode 7 Annex B (indicative).",
+  "_units": "gamma: kN/m3, phi_k: degrees, c_k: kPa",
+
+  "soils": [
+    {
+      "id": "gravel_dense",
+      "name": "Dense Gravel",
+      "group": "Granular",
+      "gamma": 20.0,
+      "phi_k": 38.0,
+      "c_k":    0.0,
+      "notes": "Well-graded dense gravel. Craig Table 1.5."
+    },
+    {
+      "id": "gravel_loose",
+      "name": "Loose Gravel",
+      "group": "Granular",
+      "gamma": 17.0,
+      "phi_k": 32.0,
+      "c_k":    0.0,
+      "notes": "Loose gravel or gravelly sand."
+    },
+    {
+      "id": "sand_dense",
+      "name": "Dense Sand",
+      "group": "Granular",
+      "gamma": 19.0,
+      "phi_k": 35.0,
+      "c_k":    0.0,
+      "notes": "Dense clean sand (SP/SW). Craig Table 1.5."
+    },
+    {
+      "id": "sand_medium",
+      "name": "Medium Sand",
+      "group": "Granular",
+      "gamma": 18.0,
+      "phi_k": 32.0,
+      "c_k":    0.0,
+      "notes": "Medium-density clean sand."
+    },
+    {
+      "id": "sand_loose",
+      "name": "Loose Sand",
+      "group": "Granular",
+      "gamma": 16.5,
+      "phi_k": 28.0,
+      "c_k":    0.0,
+      "notes": "Loose fine sand. Potentially liquefiable."
+    },
+    {
+      "id": "london_clay",
+      "name": "London Clay",
+      "group": "Cohesive",
+      "gamma": 20.0,
+      "phi_k": 25.0,
+      "c_k":   10.0,
+      "notes": "Typical London Clay parameters for drained (long-term) analysis. After Gasparre et al. (2007)."
+    },
+    {
+      "id": "stiff_clay",
+      "name": "Stiff Clay",
+      "group": "Cohesive",
+      "gamma": 19.5,
+      "phi_k": 24.0,
+      "c_k":   15.0,
+      "notes": "Generic stiff overconsolidated clay."
+    },
+    {
+      "id": "firm_clay",
+      "name": "Firm Clay",
+      "group": "Cohesive",
+      "gamma": 18.5,
+      "phi_k": 22.0,
+      "c_k":    8.0,
+      "notes": "Firm to stiff clay. Typical for many UK sites."
+    },
+    {
+      "id": "soft_clay",
+      "name": "Soft Clay",
+      "group": "Cohesive",
+      "gamma": 17.0,
+      "phi_k": 18.0,
+      "c_k":    5.0,
+      "notes": "Soft normally consolidated clay. High settlement risk."
+    },
+    {
+      "id": "made_ground_fill",
+      "name": "Made Ground / Fill",
+      "group": "Fill",
+      "gamma": 17.0,
+      "phi_k": 22.0,
+      "c_k":    0.0,
+      "notes": "Typical uncontrolled fill. Parameters highly variable; site investigation essential."
+    },
+    {
+      "id": "chalk",
+      "name": "Chalk (Weathered)",
+      "group": "Rock / Weak",
+      "gamma": 21.0,
+      "phi_k": 35.0,
+      "c_k":   20.0,
+      "notes": "Weathered chalk. Lord et al. (2002) typical values."
+    },
+    {
+      "id": "mudstone",
+      "name": "Mudstone",
+      "group": "Rock / Weak",
+      "gamma": 22.0,
+      "phi_k": 28.0,
+      "c_k":   30.0,
+      "notes": "Weak to moderately weak mudstone."
+    }
+  ]
+}

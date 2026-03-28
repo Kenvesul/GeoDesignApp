@@ -1,0 +1,76 @@
+# Session Diary
+
+## 2026-03-26
+
+- Inspected project roadmap and `.claude/CLAUDE_CONTEXT.md`.
+- Confirmed Phase 6 focus: bug fixes first, then PySide6 desktop architecture.
+- Found that `ui/app.py` already includes `_slim_for_session()` and `_send_temp_file()`.
+- Identified a likely live bug in sheet-pile export routing for PDF/DOCX.
+- Baseline attempt with system Python failed due to environment issues; switching to `.venv` for reliable validation.
+- Normalized sheet-pile legacy field aliases in `api.py` (`h_retain` -> `h_retained`, `surcharge_kpa` -> `q`) and added backward-compatible `governing_combination` output.
+- Added dedicated sheet-pile export functions in `api.py`, `exporters/report_pdf.py`, and `exporters/report_docx.py`.
+- Fixed legacy and React sheet-pile export routes in `ui/app.py`, plus added missing `/api/sheet-pile/export/pdf|docx` endpoints.
+- Reworked temp-file export cleanup to delete files immediately after reading them into memory, which resolved the Windows temp-file leak in tests.
+- Added Flask regression coverage for sheet-pile analysis/export wiring, export temp-file cleanup, and session payload size.
+- Verified:
+  - `tests/test_app.py` passes in the current sandbox setup
+  - `tests/test_search.py` passes
+  - `tests/test_sheet_pile.py` passes under pytest
+- Scaffolded the initial `desktop/` PySide6 architecture:
+  - application entry point
+  - main window and tab shell
+  - shared widgets
+  - first functional `SlopePage`
+  - placeholder pages for Foundation, Wall, Pile, and Sheet Pile
+  - desktop smoke test stub
+- Extended the desktop scaffold with:
+  - a functional `FoundationPage`
+  - persisted dark-mode preference in `desktop/main_window.py`
+  - a second desktop smoke assertion for the theme toggle
+- Rebuilt `.venv` and reinstalled the project dependency set, including `PySide6`, `numpy`, `matplotlib`, and `pytest-qt`.
+- Verified the refreshed virtualenv by importing the main app dependencies and rerunning Flask plus desktop smoke coverage.
+- Implemented a functional `desktop/pages/sheet_pile_page.py` with:
+  - validated inputs and soil presets
+  - threaded analysis via `api.run_sheet_pile_analysis()`
+  - live result summary and combination table
+  - local pressure-diagram PNG generation
+  - PDF, DOCX, and PNG export actions
+- Implemented a functional `desktop/pages/wall_page.py` with:
+  - validated retaining-wall inputs and soil presets
+  - threaded analysis via `api.run_wall_analysis()`
+  - live result summary and governing combination table
+  - PDF, DOCX, and PNG export actions
+- Reworked `desktop/pages/project_dashboard.py` into a live desktop status board with per-tab cards and pass/fail styling.
+- Wired `desktop/main_window.py` so Slope, Foundation, Wall, and Sheet Pile push live status updates back into the dashboard.
+- Added a dashboard update smoke test in `tests/test_desktop_ui.py`.
+- Verified:
+  - `python -m py_compile` passes for the updated desktop files
+  - `pytest tests/test_desktop_ui.py -q` passes (`3 passed`)
+- Noted one non-blocking environment warning:
+  - pytest cache creation is blocked by stale `pytest-cache-files-*` directories with access restrictions
+- Continued the desktop scaffold with:
+  - a functional `desktop/pages/sheet_pile_page.py`
+  - a functional `desktop/pages/wall_page.py`
+  - a live `desktop/pages/project_dashboard.py` status board
+  - main-window wiring so Slope, Foundation, Wall, and Sheet Pile push status updates into the dashboard
+- Verified the desktop shell again:
+  - `pytest tests/test_desktop_ui.py -q` passes after the new page wiring
+- Started the slope-calculation debug pass and reproduced the reported issue directly in `api.run_slope_analysis()`.
+- Identified two concrete slope bugs:
+  - the API slope search and DA1 verification were using different auto-bounds and grid densities
+  - the slope plot was willing to draw circle segments outside the actual slope extents
+- Fixed the slope API/plot consistency layer:
+  - `api.py` now uses the core search auto-bounds wrapper
+  - `verify_slope_da1()` now receives the same bounds and grid density as the characteristic search
+  - slope results now expose `governing_combination`
+  - `exporters/plot_slope.py` now uses the actual circle/slope intersections for slice borders and clips the plotted arc to the slope extent
+- Added slope regressions in `tests/test_api.py` for:
+  - `governing_combination`
+  - a near-flat dry profile no longer reporting collapse
+- Repaired `tests/test_api.py` after a temporary encoding/header break during the edit pass and moved export tests to workspace-local files to avoid sandbox temp-directory permission issues.
+- Verified:
+  - `pytest tests/test_api.py -q` passes (`17 passed`)
+  - `pytest tests/test_desktop_ui.py -q` passes (`3 passed`)
+- Current slope status:
+  - the false-collapse behavior for near-flat dry geometry is removed
+  - deeper calibration is still needed because some remaining stable cases now return unrealistically large FoS values instead of failing
