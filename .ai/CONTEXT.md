@@ -1,4 +1,4 @@
-# CLAUDE_CONTEXT.md — GeoDesignApp AI Session Guide
+# CONTEXT.md — GeoDesignApp AI Session Guide
 **Last updated:** 2026-03-28
 **Read this file at the start of every new session.**
 
