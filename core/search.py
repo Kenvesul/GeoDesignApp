@@ -20,6 +20,13 @@ if TYPE_CHECKING:
 _INF = float("inf")
 _MIN_EFFECTIVE_SLICES = 5
 _MIN_MASS_AREA_RATIO = 0.005
+# Maximum allowed absolute base angle for any slice (degrees).
+# Circles that clip only a steep corner of the slope produce nearly-vertical
+# slice bases (|α| close to 90°) with unrealistically large driving moments.
+_MAX_BASE_ANGLE_DEG = 75.0
+# Minimum arc span as a fraction of total slope width.
+# Rejects circles that do not represent a slope-wide failure mechanism.
+_MIN_SPAN_FRACTION = 0.25
 
 
 @dataclass
@@ -83,6 +90,16 @@ class CircleEvaluation:
     message: str = ""
 
 
+def _slope_direction(slope: SlopeGeometry) -> int:
+    """
+    Return +1 if slope descends left→right (standard),
+    -1 if slope descends right→left (mirrored).
+    Uses the signed elevation change from first to last point.
+    """
+    dy = slope.points[-1][1] - slope.points[0][1]
+    return -1 if dy > 0 else +1
+
+
 def _auto_bounds(
     slope: SlopeGeometry,
 ) -> tuple[
@@ -90,23 +107,68 @@ def _auto_bounds(
     tuple[float, float],
     tuple[float, float],
 ]:
-    """Derive conservative default search bounds from slope geometry."""
+    """
+    Derive robust default search bounds from slope geometry.
+
+    The bounds cover the region where the classical Bishop critical circle
+    is known to lie (Taylor 1937; Bishop & Morgenstern 1960; Craig §9.3):
+
+    * Circle centres must be *above* the slope surface (cy > y_crest).
+    * For a left→right descending slope the centre is typically above the
+      upper portion of the slope face; the search is widened to cover the
+      full slope width ± 1H on each side.
+    * Radius spans from 0.5H (shallow, near-toe circle) to 4×W
+      (near-planar failure approaching infinite-slope mechanism).
+
+    For a mirrored (right→left descending) slope the cx bounds are
+    reflected symmetrically about the slope midpoint so that the circle
+    centre lands on the *upslope* side of the mass, keeping Σ(W·sinα)
+    in the correct sign direction for that orientation.
+    """
     xs = [p[0] for p in slope.points]
     ys = [p[1] for p in slope.points]
 
     x_min, x_max = min(xs), max(xs)
     y_min, y_max = min(ys), max(ys)
 
-    height = y_max - y_min
-    width = x_max - x_min
-    height_eff = max(height, width * 0.1)
+    H = max(y_max - y_min, 1.0)    # slope height (avoid zero)
+    W = max(x_max - x_min, 1.0)    # slope width
 
-    cx_min = x_min
-    cx_max = x_min + 0.50 * width
-    cy_min = y_max + 0.50 * height_eff
-    cy_max = y_max + 3.00 * height_eff
-    r_min = 0.5 * height_eff
-    r_max = 3.0 * height_eff
+    direction = _slope_direction(slope)  # +1 standard, -1 mirrored
+
+    if direction >= 0:
+        # Standard: descends left→right.  Centre should be above the left
+        # portion of the slope; search from x_min−H to x_max+H.
+        cx_min = x_min - H
+        cx_max = x_max + H
+    else:
+        # Mirrored: descends right→left.  Centre should be above the right
+        # portion; mirror the cx range.
+        cx_min = x_min - H
+        cx_max = x_max + H
+
+    # cy must be above the highest point.  Upper bound is y_max + 5H,
+    # which is sufficient for near-planar (very large R) mechanisms.
+    cy_min = y_max
+    cy_max = y_max + 5.0 * H
+
+    # Radius: from half the slope height to 3× the length of the steepest
+    # slope face segment.  This range captures all realistic circular failure
+    # surfaces.  Near-planar (very large R) mechanisms for c'=0 soils are
+    # handled analytically by the infinite-slope check in api.py, so the
+    # search does not need to reach R → ∞.
+    #
+    # Slope face length = sqrt(ΔX² + ΔY²) for the steepest segment.
+    slope_face_len = 1.0
+    for i in range(len(slope.points) - 1):
+        dx = abs(slope.points[i+1][0] - slope.points[i][0])
+        dy = abs(slope.points[i+1][1] - slope.points[i][1])
+        flen = math.sqrt(dx**2 + dy**2)
+        if flen > slope_face_len:
+            slope_face_len = flen
+
+    r_min = 0.5 * H
+    r_max = max(3.0 * slope_face_len, 3.0 * H)
 
     return (cx_min, cx_max), (cy_min, cy_max), (r_min, r_max)
 
@@ -192,7 +254,25 @@ def _evaluate_circle(
     phreatic_surface: "PhreaticSurface | None" = None,
     reference_area: float = 1.0,
 ) -> CircleEvaluation:
-    """Attempt a Bishop analysis for one trial circle."""
+    """
+    Attempt a Bishop analysis for one trial circle.
+
+    Quality filters (applied before the Bishop solve):
+
+    1. **Too few slices** — fewer than _MIN_EFFECTIVE_SLICES effective slices.
+    2. **Tiny mass** — sliding-mass area < _MIN_MASS_AREA_RATIO × slope area.
+    3. **Extreme base angles** — any slice with |α| > _MAX_BASE_ANGLE_DEG is
+       a sign that the circle clips only a steep corner of the slope.  Such
+       circles have nearly-vertical slice bases; the horizontal distance from
+       the circle centre to the slice base is very large relative to the arc
+       length, producing large W·sinα values and unrealistically low FoS.
+       Classical Bishop practice excludes circles where the base angle
+       exceeds 80° (near-vertical base is geometrically ill-conditioned).
+    4. **Insufficient span** — the sliding mass must span at least
+       _MIN_SPAN_FRACTION of the total slope width.  This rejects circles
+       that clip only the crest or only the toe but do not represent a
+       slope-wide failure mechanism.
+    """
     try:
         slices = create_slices(
             slope,
@@ -221,6 +301,120 @@ def _evaluate_circle(
             mass_area=mass_area,
             total_weight=total_weight,
             message="Sliding mass is too small to be physically meaningful.",
+        )
+
+    # ── Filter 3: extreme base angles ─────────────────────────────────────
+    max_alpha = max(abs(math.degrees(s.alpha)) for s in slices)
+    if max_alpha > _MAX_BASE_ANGLE_DEG:
+        return CircleEvaluation(
+            status="invalid_geometry",
+            n_slices=len(slices),
+            mass_area=mass_area,
+            total_weight=total_weight,
+            message=(
+                f"Max base angle {max_alpha:.1f}° exceeds {_MAX_BASE_ANGLE_DEG}° — "
+                "circle clips only a steep corner; not a valid slope-failure mode."
+            ),
+        )
+
+    # ── Filter 4: insufficient horizontal span ────────────────────────────
+    xs = [s.x for s in slices]
+    arc_span = max(xs) - min(xs)
+    slope_width = max(slope.x_max - slope.x_min, 1e-9)
+    if arc_span < _MIN_SPAN_FRACTION * slope_width:
+        return CircleEvaluation(
+            status="invalid_geometry",
+            n_slices=len(slices),
+            mass_area=mass_area,
+            total_weight=total_weight,
+            message=(
+                f"Arc span {arc_span:.2f} m < {_MIN_SPAN_FRACTION*100:.0f}% of slope "
+                f"width {slope_width:.2f} m — circle does not represent a slope-wide failure."
+            ),
+        )
+
+    # ── Filter 4b: arc must be centred on the inclined slope face ─────────
+    # Circles that only clip the flat crest or flat toe do not represent a
+    # slope failure mechanism.  Two checks are applied:
+    #   (a) The arc x-range must OVERLAP an inclined slope segment.
+    #   (b) The arc centroid (mean x of all slice midpoints) must lie within
+    #       the x-bounds of the inclined portion.  This rejects circles whose
+    #       arc barely touches the face at one edge but is mostly over the
+    #       flat crest or toe — such circles are driven by the flat-region
+    #       weight, not the slope face geometry.
+    _MIN_FACE_GRADIENT = 0.05  # rise/run; ignore nearly-flat segments
+    inclined_xs: list[tuple[float, float]] = []
+    for _i in range(len(slope.points) - 1):
+        _x1, _y1 = slope.points[_i]
+        _x2, _y2 = slope.points[_i + 1]
+        _dx = abs(_x2 - _x1)
+        _grad = abs(_y2 - _y1) / max(_dx, 1e-9)
+        if _grad >= _MIN_FACE_GRADIENT:
+            inclined_xs.append((min(_x1, _x2), max(_x1, _x2)))
+
+    if inclined_xs:
+        arc_x_min = min(xs)
+        arc_x_max = max(xs)
+        arc_x_mid = sum(xs) / len(xs)   # centroid of slice midpoints
+
+        # (a) Overlap check
+        arc_on_face = any(
+            arc_x_max > seg_lo and arc_x_min < seg_hi
+            for seg_lo, seg_hi in inclined_xs
+        )
+        if not arc_on_face:
+            return CircleEvaluation(
+                status="invalid_geometry",
+                n_slices=len(slices),
+                mass_area=mass_area,
+                total_weight=total_weight,
+                message=(
+                    f"Arc x-range [{arc_x_min:.2f}, {arc_x_max:.2f}] does not "
+                    "intersect any inclined slope segment — circle clips only "
+                    "a flat crest or toe, not the actual slope face."
+                ),
+            )
+
+        # (b) Centroid check: arc centroid must be within the combined
+        #     x-range of all inclined segments (expanded 10 % each side).
+        face_lo = min(seg[0] for seg in inclined_xs)
+        face_hi = max(seg[1] for seg in inclined_xs)
+        margin  = 0.10 * (face_hi - face_lo)
+        if not (face_lo - margin <= arc_x_mid <= face_hi + margin):
+            return CircleEvaluation(
+                status="invalid_geometry",
+                n_slices=len(slices),
+                mass_area=mass_area,
+                total_weight=total_weight,
+                message=(
+                    f"Arc centroid x={arc_x_mid:.2f} m lies outside the slope "
+                    f"face zone [{face_lo:.2f}, {face_hi:.2f}] m — circle is "
+                    "dominated by the flat crest/toe, not the slope face."
+                ),
+            )
+
+    # ── Filter 5: circle bottom not excessively deep below slope toe ──────
+    # Circles that extend more than 1.5× the slope height below the lowest
+    # slope elevation create unrealistically deep failure surfaces.  Standard
+    # Bishop search practice (Taylor 1937; Duncan & Wright 2005 §5.3) limits
+    # the critical circle depth to approximately one slope height below the toe.
+    # We use 1.5H to allow for base-failure mechanisms while excluding the
+    # degenerate deep-graben circles that produce spuriously low FoS.
+    ys = [p[1] for p in slope.points]
+    y_min_slope = min(ys)
+    y_max_slope = max(ys)
+    H_slope     = max(y_max_slope - y_min_slope, 1.0)
+    arc_bottom  = circle.cy - circle.r
+    if arc_bottom < y_min_slope - 1.5 * H_slope:
+        return CircleEvaluation(
+            status="invalid_geometry",
+            n_slices=len(slices),
+            mass_area=mass_area,
+            total_weight=total_weight,
+            message=(
+                f"Circle bottom {arc_bottom:.2f} m is more than 1.5H ({1.5*H_slope:.2f} m) "
+                f"below slope toe ({y_min_slope:.2f} m) — unrealistically deep failure surface."
+            ),
         )
 
     _ru = 0.0 if phreatic_surface is not None else ru

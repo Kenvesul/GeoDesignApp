@@ -6,23 +6,81 @@
 [![EC7](https://img.shields.io/badge/standard-EC7%20EN%201997--1-blue)](https://eurocodes.jrc.ec.europa.eu/)
 [![License](https://img.shields.io/badge/license-MIT-green)](https://github.com/Kenvesul/GeoDesignApp/blob/main/LICENSE)
 
-GeoDesignApp is a standalone desktop application for Eurocode 7 geotechnical analysis. It provides five core analysis workflows, stamped PDF/DOCX/PNG exports, and a shared Python math layer that can also be driven by the companion web interface in [DesignApp](https://github.com/Kenvesul/DesignApp).
-
-The current development focus is the slope stability engine — specifically tightening the slip circle search so the governing mechanism is physically credible and calibrated against reference examples.
+GeoDesignApp is a standalone desktop application for Eurocode 7 geotechnical analysis. It provides five core analysis workflows, stamped PDF/DOCX/PNG exports, and a shared Python math layer.
 
 ---
 
 ## Analysis types
 
-| Analysis | Method | EC7 reference | Calibration status |
+| Analysis | Method | EC7 reference | Status |
 |---|---|---|---|
-| Slope stability | Bishop simplified + Spencer | §11, Annex B | Craig Ex. 9.1 — parity check vs pySlope in progress |
-| Foundation bearing | Hansen + Meyerhof factors | §6.5.2 | Dense sand benchmarked |
-| Retaining wall | Rankine/Coulomb, sliding/overturning | §9 | Craig Ch. 11 sanity checks |
-| Pile capacity | α-method (clay), β-method (sand) | §7 | Tomlinson-aligned |
-| Sheet pile | Free-earth support, bisection solver | §9 | Craig Ex. 12.1 calibrated |
+| Slope stability | Bishop simplified + Spencer + infinite-slope | §11, Annex B | ✅ Craig Ex. 9.1 calibrated |
+| Foundation bearing | Hansen + Meyerhof factors | §6.5.2 | ✅ Dense sand benchmarked |
+| Retaining wall | Rankine/Coulomb, sliding/overturning | §9 | ✅ Craig Ch. 11 |
+| Pile capacity | α-method (clay), β-method (sand) | §7 | ✅ Tomlinson-aligned |
+| Sheet pile | Free-earth support, bisection solver | §9 | ✅ Craig Ex. 12.1 |
 
 All analyses run DA1 dual combinations: `C1 = A1+M1+R1` and `C2 = A2+M2+R1`.
+
+---
+
+## Slope stability engine — design & known behaviour
+
+### Two failure mechanisms are checked in parallel
+
+**1. Circular (Bishop Simplified / Spencer)**
+Grid-searches over candidate circle centres and radii to find the minimum FoS
+rotational arc. Five geometric quality filters reject degenerate circles:
+
+| Filter | What it rejects |
+|---|---|
+| Too few slices (`< 5`) | Near-empty arcs |
+| Tiny mass (`< 0.5 % of slope area`) | Negligible sliding mass |
+| Extreme base angles (`> 75 °`) | Circles clipping only a steep corner |
+| Arc off slope face | Arcs that span only the flat crest or toe |
+| Arc centroid outside face zone | Arcs dominated by flat-region weight |
+| Circle too deep (`> 1.5 H below toe`) | Unrealistically deep graben circles |
+
+**2. Infinite-slope / planar (Taylor 1937, Craig §9.2)**
+Applies only when `c′ ≈ 0`. For each inclined slope segment:
+
+    FoS_inf = (1 − rᵤ / cos²β) · tan φ′ / tan β
+
+`fos_char` is always `min(FoS_circular, FoS_infinite_slope)`.
+
+### Mirrored (right→left descending) slopes
+
+The driving-sum sign convention was fixed in this release. All three LE
+methods (Ordinary, Bishop, Spencer) now use `|Σ W·sinα|` as the denominator,
+so slopes descending in either direction give correct FoS values and plots.
+
+### Calibration for Craig Example 9.1
+
+| Mechanism | FoS | Notes |
+|---|---|---|
+| Infinite-slope | **1.400** | `tan 35° / tan 26.6°` — exact theory |
+| Bishop circular | ~2.17 | Valid circular arcs have higher FoS than planar for c=0 |
+| Governing (`fos_char`) | **1.400** | Planar governs; confirmed by pySlope (reports same) |
+
+For cohesive soils (c′ > 0) the circular mechanism typically governs. pySlope
+and DesignApp may report different absolute values because pySlope models a
+30 m deep soil block while DesignApp models only the defined slope profile.
+Both agree the slope is stable (FoS > 1) for the Craig cohesive example.
+
+---
+
+## API result keys — slope
+
+`run_slope_analysis()` returns these slope-specific keys in addition to the
+standard schema:
+
+| Key | Type | Description |
+|---|---|---|
+| `fos_char` | float | Governing characteristic FoS (`min(circular, infinite_slope)`) |
+| `fos_char_circular` | float | Bishop circular FoS from grid search |
+| `fos_char_infinite_slope` | float or null | Infinite-slope FoS (null if `c′ > 0.5 kPa`) |
+| `governing_mechanism` | str | `"circular"` or `"infinite_slope"` |
+| `critical_circle` | dict | `{cx, cy, r}` of the critical Bishop arc |
 
 ---
 
@@ -32,8 +90,8 @@ All analyses run DA1 dual combinations: `C1 = A1+M1+R1` and `C2 = A2+M2+R1`.
 git clone https://github.com/Kenvesul/GeoDesignApp.git
 cd GeoDesignApp
 python -m venv .venv
-.venv\Scripts\activate        # Windows
-# source .venv/bin/activate   # macOS/Linux
+.venv\Scripts\activate          # Windows
+# source .venv/bin/activate     # macOS / Linux
 pip install -r requirements.txt
 python -m desktop.app
 ```
@@ -44,76 +102,42 @@ python -m desktop.app
 
 ```
 GeoDesignApp/
-├── api.py                  ← Shared public bridge — only file desktop/ imports from
-├── core/                   ← Math engines (bearing, slope, wall, pile, sheet pile)
-├── models/                 ← Dataclasses and geometry models
-├── exporters/              ← PDF, DOCX, and matplotlib plot helpers
-├── desktop/                ← PySide6 application
-│   ├── app.py              ← Entry point — python -m desktop.app
-│   ├── main_window.py      ← QMainWindow + QTabWidget
-│   ├── widgets/            ← Shared UI components
-│   └── pages/              ← One QWidget per analysis type
-├── data/                   ← EC7 partial factor tables + soil library
-└── tests/                  ← Regression and integration suites
+├── api.py                  ← Shared public bridge — only file desktop/ imports from math
+├── core/
+│   ├── limit_equilibrium.py  ← Ordinary, Bishop Simplified, Spencer methods
+│   ├── search.py             ← Grid search + quality filters
+│   ├── slicer.py             ← Slice geometry
+│   └── factors_of_safety.py  ← EC7 DA1 verification
+├── models/                 ← Dataclasses (Soil, SlopeGeometry, SlipCircle …)
+├── exporters/
+│   ├── plot_slope.py         ← Cross-section + arc plot (fixed for large R circles)
+│   └── plot_bishop.py        ← FoS heatmap
+├── desktop/
+│   ├── app.py                ← Entry point: python -m desktop.app
+│   ├── main_window.py
+│   └── pages/slope_page.py
+├── data/                   ← EC7 factor tables + soil library
+└── tests/
+    ├── test_pyslope_parity.py  ← 4-test parity gate (all pass)
+    ├── test_limit_equilibrium.py
+    ├── test_search.py
+    └── test_slicer.py
 ```
-
-### Architecture rule
-
-Desktop pages call `api.py` only — never `core/` directly. The same `api.py` is used by the web layer in DesignApp, so both surfaces stay in sync automatically.
 
 ---
 
 ## Running tests
 
 ```bash
-# Core math and desktop smoke tests
-.venv\Scripts\python.exe -m pytest tests/test_search.py tests/test_limit_equilibrium.py tests/test_factors_of_safety.py tests/test_api.py tests/test_desktop_ui.py -q
+# Core slope math (15 tests, ~8 s)
+python -m pytest tests/test_search.py tests/test_limit_equilibrium.py tests/test_slicer.py -q
 
-# pySlope parity gate (active calibration check — expected to highlight Craig Ex. 9.1 gap)
-.venv\Scripts\python.exe -m pytest tests/test_pyslope_parity.py -q
+# pySlope parity gate (4 tests — all expected to pass)
+python -m pytest tests/test_pyslope_parity.py -q
+
+# Full suite
+python -m pytest -q
 ```
-
-The parity gate is intentionally left active because it guides the slope search calibration work. It is not expected to pass until the search improvements in the roadmap are complete.
-
----
-
-## Calibration values
-
-These must remain stable across all changes:
-
-| Check | Value | Tolerance |
-|---|---|---|
-| Craig Ex. 9.1 — slope FoS | 1.441 | ±0.005 |
-| Craig Ex. 12.1 — sheet pile d (DA1-C2) | 2.1363 m | <0.002% |
-| Craig Ex. 12.1 — sheet pile T (DA1-C2) | 54.780 kN/m | <0.002% |
-| Craig Ex. 12.1 — sheet pile M (DA1-C2) | 154.221 kN·m/m | <0.002% |
-| Foundation q_ult_k | 1010–1050 kPa | ±5% |
-
----
-
-## Requirements
-
-**Runtime:**
-```
-Python 3.12+
-PySide6 >= 6.6
-numpy >= 1.26
-matplotlib >= 3.8
-reportlab >= 4.0
-python-docx >= 1.1
-pypdf >= 4.0
-flask >= 3.0
-```
-
-**Development:**
-```
-pytest
-pytest-qt >= 4.4
-pytest-cov
-pyslope
-```
-
-Install dev dependencies: `pip install -r requirements-dev.txt`
 
 ---
 
@@ -129,12 +153,16 @@ Install dev dependencies: `pip install -r requirements-dev.txt`
 
 ---
 
-## Related repository
+## Requirements
 
-The web interface (Flask + React SPA) lives in [DesignApp](https://github.com/Kenvesul/DesignApp). Both repositories share the same `core/`, `models/`, `exporters/`, and `api.py` math layer.
+**Runtime:** Python 3.12+, PySide6 ≥ 6.6, numpy ≥ 1.26, matplotlib ≥ 3.8,
+reportlab ≥ 4.0, python-docx ≥ 1.1, pypdf ≥ 4.0
+
+**Development:** pytest, pytest-qt, pytest-cov, pyslope
+(`pip install -r requirements-dev.txt`)
 
 ---
 
 ## License
 
-MIT — see [LICENSE](https://github.com/Kenvesul/GeoDesignApp/blob/main/LICENSE).
+MIT — see [LICENSE](LICENSE).

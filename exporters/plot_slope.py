@@ -80,7 +80,10 @@ def plot_slope_stability(
 
     x_min = min(xs) - 1.0
     x_max = max(xs) + 1.0
-    y_min = min(ys) - circle.r * 1.1   # room below circle
+    # The bottom of the visible arc is cy - r (lowest point of circle).
+    # Add a small margin below the deepest feature (arc bottom or slope toe).
+    arc_bottom = circle.cy - circle.r
+    y_min = min(min(ys), arc_bottom) - 0.5
 
     # Fill polygon: ground surface + baseline
     fill_x = [x_min] + list(xs) + [x_max, x_max, x_min]
@@ -91,47 +94,72 @@ def plot_slope_stability(
     # ── 2. Critical slip circle (arc below ground surface only) ───────────
     cx, cy, r = circle.cx, circle.cy, circle.r
 
-    # Parametric arc: find angles where circle intersects the ground
-    # For a full circle, draw 0 to 2pi and clip with ground surface fill.
-    # Simplification: draw the full circle arc clipped below ground profile.
-    theta = [math.radians(t) for t in range(0, 361)]
-    circ_x = [cx + r * math.cos(t) for t in theta]
-    circ_y = [cy + r * math.sin(t) for t in theta]
-
-    # Only plot points that are below the ground surface
-    def _ground_y_at_x(x):
-        return slope.get_y_at_x(x)
-
-    arc_x, arc_y = [], []
-    for px, py in zip(circ_x, circ_y):
-        if slope.x_min <= px <= slope.x_max:
-            ground_y = _ground_y_at_x(px)
-            if ground_y is not None and py <= ground_y + 0.05:
-                arc_x.append(px)
-                arc_y.append(py)
-        else:
-            if arc_x:
-                ax.plot(arc_x, arc_y, color=_C_CIRCLE, linewidth=2.0,
-                        linestyle="--", zorder=4)
-                arc_x, arc_y = [], []
-
-    if arc_x:
-        ax.plot(arc_x, arc_y, color=_C_CIRCLE, linewidth=2.0, linestyle="--",
-                zorder=4, label=f"Critical circle (FoS={fos:.3f})")
-
-    # Centre marker
-    ax.plot(cx, cy, marker="+", color=_C_CIRCLE, markersize=10, markeredgewidth=2, zorder=5)
-
-    # ── 3. Slice borders ──────────────────────────────────────────────────
-    # Find the x-extent of the slip circle intersecting the slope
-    # entry point (toe) and exit point (crest)
+    # Find the entry and exit x-coordinates of the slip arc (where it
+    # intersects the ground surface).  Use the same function as slicer.py
+    # so the visualised arc is exactly consistent with the computed slices.
     bounds = _find_circle_slope_intersections(slope, circle)
     if bounds is not None:
         x_entry, x_exit = bounds
     else:
-        x_entry = x_exit = 0.0
+        # Fall back: full lower arc clipped to slope x range
+        x_entry = max(circle.x_left,  slope.x_min)
+        x_exit  = min(circle.x_right, slope.x_max)
 
-    if x_exit > x_entry and n_slices > 0:
+    # Convert x entry/exit to angles on the circle.
+    # We parameterise the circle as  x = cx + r·cos(θ), y = cy + r·sin(θ).
+    # The lower arc spans θ in [π+ε, 2π-ε] (y below centre).
+    # Entry angle (left-hand intersection):
+    #   cos(θ_entry) = (x_entry - cx) / r
+    def _x_to_angle_lower(x: float) -> float:
+        """Angle on the lower arc corresponding to horizontal position x."""
+        cos_val = max(-1.0, min(1.0, (x - cx) / r))
+        # Lower arc: sin(θ) < 0  →  θ in [π, 2π], i.e. negative acos
+        return -math.acos(cos_val)  # returns angle in [-π, 0]
+
+    n_arc = 300
+    # Build arc from entry to exit using linspace over x
+    import numpy as _np
+    arc_xs = _np.linspace(x_entry, x_exit, n_arc)
+    arc_ys = []
+    for ax in arc_xs:
+        disc = r**2 - (ax - cx)**2
+        if disc < 0:
+            arc_ys.append(None)
+        else:
+            arc_ys.append(cy - math.sqrt(disc))   # lower arc
+
+    # Plot as a single continuous segment (filter out None gaps)
+    seg_x, seg_y = [], []
+    for ax, ay in zip(arc_xs, arc_ys):
+        if ay is None:
+            if seg_x:
+                ax_plot, ay_plot = seg_x, seg_y
+                ax_plot_label = f"Critical circle (FoS={fos:.3f})"
+                ax.plot(seg_x, seg_y, color=_C_CIRCLE, linewidth=2.0,
+                        linestyle="--", zorder=4)
+                seg_x, seg_y = [], []
+        else:
+            seg_x.append(ax)
+            seg_y.append(ay)
+
+    if seg_x:
+        ax.plot(seg_x, seg_y, color=_C_CIRCLE, linewidth=2.5, linestyle="--",
+                zorder=4, label=f"Critical circle (FoS={fos:.3f})")
+
+    # Centre marker
+    ax.plot(cx, cy, marker="+", color=_C_CIRCLE, markersize=12,
+            markeredgewidth=2.0, zorder=5)
+    # Draw a thin full-circle outline (dashed, lighter) so the centre
+    # context is visible even when the centre is outside the plot area.
+    theta_full = [math.radians(t) for t in range(0, 361, 2)]
+    full_x = [cx + r * math.cos(t) for t in theta_full]
+    full_y = [cy + r * math.sin(t) for t in theta_full]
+    ax.plot(full_x, full_y, color=_C_CIRCLE, linewidth=0.5,
+            linestyle=":", alpha=0.35, zorder=3)
+
+    # ── 3. Slice borders ──────────────────────────────────────────────────
+    # Reuse bounds from the arc calculation above.
+    if bounds is not None and x_exit > x_entry and n_slices > 0:
         dx_slice = (x_exit - x_entry) / n_slices
         for i in range(1, n_slices):
             xi = x_entry + i * dx_slice

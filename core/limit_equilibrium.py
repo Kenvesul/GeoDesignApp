@@ -164,25 +164,28 @@ def _resolve_u_vals(slices, ru: float) -> list[float]:
 
 def _validate_driving_sum(sum_driving: float, total_weight: float, label: str) -> None:
     """
-    Reject circles that only appear stable because the driving term is
-    numerically or physically negligible.
-    """
-    if sum_driving <= 0:
-        raise ValueError(
-            f"{label} = {sum_driving:.4f} <= 0 - geometry may be invalid "
-            "or all slice bases dip away from the failure direction."
-        )
+    Reject circles whose driving term magnitude is numerically negligible.
 
-    if sum_driving <= _MIN_DRIVING_SUM_ABS:
+    Uses |sum_driving| so that BOTH slope orientations are accepted:
+        Standard  (descends left→right): Σ(W·sinα) > 0  (clockwise rotation)
+        Mirrored  (descends right→left): Σ(W·sinα) < 0  (counter-clockwise)
+
+    Bishop's FoS = Σ(resist) / |Σ(W·sinα)|; the sign encodes sliding
+    direction only — it does not affect the stability ratio.
+    Rejecting negative sums was the root cause of mirrored-slope failures.
+    """
+    abs_driving = abs(sum_driving)
+
+    if abs_driving <= _MIN_DRIVING_SUM_ABS:
         raise ValueError(
-            f"{label} = {sum_driving:.6f} is too small for a meaningful "
+            f"|{label}| = {abs_driving:.6f} is too small for a meaningful "
             "sliding mass."
         )
 
-    ratio = sum_driving / max(total_weight, 1e-9)
+    ratio = abs_driving / max(total_weight, 1e-9)
     if ratio <= _MIN_DRIVING_WEIGHT_RATIO:
         raise ValueError(
-            f"{label} / total_weight = {ratio:.6f} is too small for a "
+            f"|{label}| / total_weight = {ratio:.6f} is too small for a "
             "meaningful sliding mass."
         )
 
@@ -271,7 +274,10 @@ def ordinary_method(
 
     _validate_driving_sum(sum_driving, total_weight, "Σ(W·sinα)")
 
-    fos = sum_resist / sum_driving
+    # Use abs(sum_driving) so both slope orientations give FoS > 0.
+    # For a mirrored (right→left descending) slope, sum_driving is negative
+    # because all α are negative; the magnitude is still the correct denominator.
+    fos = sum_resist / abs(sum_driving)
 
     return FoSResult(
         method        = "Ordinary (Fellenius)",
@@ -387,6 +393,11 @@ def bishop_simplified(
     total_weight = sum(abs(s.weight) for s in slices)
     _validate_driving_sum(sum_driving, total_weight, "Σ(W·sinα + kh·W·cosα)")
 
+    # abs_driving is used as the denominator throughout iteration.
+    # For mirrored (right→left descending) slopes sum_driving is negative;
+    # using its magnitude gives the correct FoS (ratio of resistance to driving).
+    abs_driving = abs(sum_driving)
+
     # ── Seed value ────────────────────────────────────────────────────────
     # When slices carry per-slice u values, pass ru=0.0 so ordinary_method
     # uses _resolve_u_vals(slices, 0.0) which still picks up slice.u.
@@ -422,7 +433,7 @@ def bishop_simplified(
             numerator = (s.soil.c_k * s.b + effective_term) / m_alpha
             sum_resist += numerator
 
-        fos_new = sum_resist / sum_driving
+        fos_new = sum_resist / abs_driving
 
         if abs(fos_new - fos) < tol:
             fos       = fos_new
@@ -613,6 +624,9 @@ def spencer_method(
     total_weight = sum(abs(w) for w in weights)
     _validate_driving_sum(sum_W_sina, total_weight, "Σ(W·sinα + kh·W·cosα)")
 
+    # Use magnitude throughout — negative sum_W_sina is valid for a mirrored slope.
+    abs_W_sina = abs(sum_W_sina)
+
     # ── Seed F from Bishop (with same kh/kv) ─────────────────────────────
     _seed_ru = 0.0 if _has_per_slice_u else ru
     try:
@@ -644,7 +658,7 @@ def spencer_method(
         """
         Moment-equation FoS — identical to Bishop's Simplified.
         Spencer (1967) Eq.(2): moment about circle centre.
-            F_m = Σ[ S_i / mα ] / Σ[ W·sinα ]
+            F_m = Σ[ S_i / mα ] / |Σ[ W·sinα ]|
             mα  = cosα + sinα·tanφ'/F    (θ-independent for circular surfaces)
         """
         num = 0.0
@@ -653,7 +667,7 @@ def spencer_method(
             if abs(m_alpha) < 1e-9:
                 continue
             num += S_i / m_alpha
-        return num / sum_W_sina
+        return num / abs_W_sina
 
     def _compute_F_force(F_in: float, theta_in: float) -> float:
         """
@@ -675,7 +689,9 @@ def spencer_method(
             den += w   * math.sin(a_minus_t)
         if abs(den) < 1e-9:
             return F_in
-        return num / den
+        # Use abs(den) — force equation denominator can be negative for
+        # mirrored slopes; we want FoS > 0 regardless of sliding direction.
+        return num / abs(den)
 
     def _converge_F_moment(F_seed: float) -> float:
         """Iterate F_m to convergence (θ-independent for circular surfaces)."""

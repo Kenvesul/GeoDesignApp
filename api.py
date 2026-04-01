@@ -137,7 +137,73 @@ def _search_zone_from_analysis(analysis: dict) -> dict | None:
     }
 
 
-def _rebuild_search_result(analysis: dict, slope: SlopeGeometry, soil: Soil) -> SearchResult:
+def _infinite_slope_fos(slope: SlopeGeometry, soil: Soil, ru: float = 0.0) -> float | None:
+    """
+    Compute the infinite-slope (planar) Factor of Safety for every slope
+    segment and return the minimum.
+
+    For a slope segment inclined at angle β:
+
+        FoS_inf = [c' + (γ·z·cos²β − u) · tan φ'] / (γ·z · cos β · sin β)
+
+    As z → ∞ (purely frictional, c'=0):
+        FoS_inf = tan(φ') / tan(β)
+
+    When c' > 0 the formula depends on failure depth z.  For finite slopes
+    with cohesion the circular Bishop search governs, so we only compute the
+    infinite-slope FoS for c'=0 (or very small cohesion < 0.5 kPa) to avoid
+    spurious over-conservative results.
+
+    The check is applied to the *steepest* segment of the slope polyline,
+    consistent with the definition of the critical planar failure plane
+    (Taylor 1937; Craig §9.2; Duncan & Wright 2005 §4.1).
+
+    Reference:
+        Taylor, D.W. (1937). Stability of Earth Slopes. J. Boston Soc. Civil
+        Engineers 24(3), 197–246.
+        Craig's Soil Mechanics, 9th ed., §9.2 (infinite slope analysis).
+        EC7 EN 1997-1:2004, §11.5 — planar failure check for drained slopes.
+
+    Returns None if the slope has no inclined segment or if c' > 0.5 kPa
+    (cohesive soils: circular failure governs; planar check not applicable).
+    """
+    if soil.c_k > 0.5:
+        # Cohesion shifts the critical mechanism to circular — skip.
+        return None
+
+    phi_rad = math.radians(soil.phi_k)
+
+    steepest_beta = 0.0
+    for i in range(len(slope.points) - 1):
+        x1, y1 = slope.points[i]
+        x2, y2 = slope.points[i + 1]
+        dx = abs(x2 - x1)
+        if dx < 1e-9:
+            continue
+        beta = abs(math.atan2(abs(y2 - y1), dx))
+        if beta > steepest_beta:
+            steepest_beta = beta
+
+    if steepest_beta < 1e-6:
+        return None   # flat slope — no planar failure
+
+    # tan β = 0 guard already handled by < 1e-6 above
+    fos_inf = math.tan(phi_rad) / math.tan(steepest_beta)
+
+    # Apply pore pressure reduction (Bishop & Morgenstern, 1960):
+    #   FoS_inf(ru) = (tan φ' - ru / cos²β · tan φ') / tan β
+    #              = (1 - ru / cos²β) · tan φ' / tan β
+    #              ≈ (1 - ru) · tan φ' / tan β   (conservative approximation)
+    # Use the exact form:
+    if ru > 0.0:
+        cos_b = math.cos(steepest_beta)
+        reduction = 1.0 - ru / (cos_b ** 2)
+        fos_inf = max(0.0, reduction * math.tan(phi_rad) / math.tan(steepest_beta))
+
+    return fos_inf
+
+
+
     """
     B-08 FIX: Reconstruct a SearchResult from the cached analysis dict.
 
@@ -262,6 +328,19 @@ def run_slope_analysis(params: dict) -> dict:
         slices = create_slices(slope, sr.critical_circle, soil, num_slices=ns)
         circ   = sr.critical_circle
 
+        # ── Infinite-slope check (Taylor 1937 / Craig §9.2) ───────────────
+        # For purely frictional soils (c'≈0), the planar failure mechanism
+        # can govern over circular failure.  Compute and report both;
+        # fos_char is the *minimum* of the two mechanisms.
+        fos_inf = _infinite_slope_fos(slope, soil, ru=ru)
+        fos_char_circular = sr.fos_min
+        if fos_inf is not None and fos_inf < fos_char_circular:
+            fos_char = fos_inf
+            governing_mechanism = "infinite_slope"
+        else:
+            fos_char = fos_char_circular
+            governing_mechanism = "circular"
+
         def _c(c):
             return dict(label=c.label, gamma_phi=round(c.gamma_phi,3),
                         phi_d=round(c.phi_d,3), c_d=round(c.c_d,3),
@@ -278,7 +357,10 @@ def run_slope_analysis(params: dict) -> dict:
             ru            = ru,
             kh            = kh,
             kv            = kv,
-            fos_char      = round(sr.fos_min, 4),
+            fos_char      = round(fos_char, 4),
+            fos_char_circular = round(fos_char_circular, 4),
+            fos_char_infinite_slope = round(fos_inf, 4) if fos_inf is not None else None,
+            governing_mechanism = governing_mechanism,
             fos_d         = round(ver.fos_d_min, 4),
             passes        = ver.passes,
             comb1         = _c(ver.comb1),
