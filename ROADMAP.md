@@ -1,5 +1,5 @@
 # GeoDesignApp — Roadmap
-**Last updated:** 2026-03-28
+**Last updated:** 2026-04-01
 
 ---
 
@@ -19,6 +19,7 @@ Stabilise and calibrate the slope stability calculation path before expanding an
 - `governing_combination` exposed in slope result dicts.
 - Near-flat dry slope false-collapse behaviour removed.
 - `core/search.py` already supports `search_zone` object and boundary warnings.
+- March 31 slope regressions fixed: export rebuild helper restored, slope plotter repaired, and adaptive filters keep shallow profiles stable.
 
 ---
 
@@ -26,8 +27,6 @@ Stabilise and calibrate the slope stability calculation path before expanding an
 
 | ID | Severity | Description |
 |---|---|---|
-| SLOPE-1 | 🔴 HIGH | Some stable geometries return unrealistically large FoS — likely boundary circles or near-zero driving |
-| SLOPE-2 | 🔴 HIGH | pySlope parity gap on Craig Ex. 9.1 — search not yet finding same governing circle |
 | SLOPE-3 | 🟡 MED | Auto search bounds may bias results toward edge-adjacent or oversized circles |
 | SLOPE-4 | 🟡 MED | Diagnostics not rich enough to explain why a given circle was selected |
 | PILE-1 | 🟡 MED | Desktop `PilePage` is placeholder only — not yet functional |
@@ -37,31 +36,31 @@ Stabilise and calibrate the slope stability calculation path before expanding an
 ## Phase 1 — Build a reliable calibration baseline
 **Files:** `core/search.py`, `tests/test_search.py`, `tests/test_api.py`, `tests/test_pyslope_parity.py`
 
-- Add named regression fixtures for: near-flat safe slope, ordinary dry slope, steep slope with many invalid circles, known unrealistically-high-FoS case, Craig Ex. 9.1 parity case.
+- Keep named regression fixtures for: near-flat safe slope, ordinary dry slope, steep slope with many invalid circles, Craig Ex. 9.1 parity case.
 - Capture not just final FoS but also: circles tested, accepted vs rejected counts, critical circle location, boundary proximity.
 
-**Exit criteria:** every known bad geometry reproduced from a test; diagnostics show why the chosen circle won.
+**Exit criteria:** core calibration cases remain green; diagnostics show why the chosen circle won.
 
 ---
 
 ## Phase 2 — Tighten physical admissibility of trial circles
 **Files:** `core/search.py`, `core/limit_equilibrium.py`, `core/slicer.py`
 
-- Add acceptance checks in `_evaluate_circle()` for: minimum slice count, minimum sliding-mass width, minimum arc engagement across slope, extreme center/radius combinations that only graze the slope.
-- Expand `CircleEvaluation.status` so rejected circles are categorised explicitly.
-- Refine `_validate_driving_sum()` so tiny-driving screening uses geometry-relative thresholds, not fixed absolutes.
+- Keep acceptance checks in `_evaluate_circle()` for: minimum slice count, minimum sliding-mass width, minimum arc engagement across slope, extreme center/radius combinations that only graze the slope.
+- Keep `CircleEvaluation.status` categories explicit and add regression coverage when new failure modes appear.
+- Refine `_validate_driving_sum()` only if future geometries show a new tiny-driving edge case.
 
-**Exit criteria:** unrealistically large FoS outliers rejected; rejection reasons visible in diagnostics.
+**Exit criteria:** outliers remain rejected without breaking shallow stable profiles; rejection reasons stay visible in diagnostics.
 
 ---
 
 ## Phase 3 — Recalibrate automatic search zone
 **Files:** `core/search.py`, `api.py`, `tests/test_search.py`
 
-- Review `_auto_bounds()` against slope height, crest/toe location, and benchmark examples.
-- Adjust default center/radius ranges to better cover deep and toe-passing circles without favouring edge minima.
-- Refine `boundary_warning` to trigger on both center proximity to zone edges and radius proximity to min/max limits.
-- Keep explicit `search_zone` override, but make defaults more engineering-friendly.
+- Review `_auto_bounds()` against slope height, crest/toe location, and benchmark examples if new profiles demand it.
+- Adjust default center/radius ranges only if a new benchmark exposes edge bias.
+- Refine `boundary_warning` to trigger on both center proximity to zone edges and radius proximity to min/max limits if needed.
+- Keep explicit `search_zone` override and the current engineering-friendly defaults.
 
 **Search zone data contract:**
 ```python

@@ -75,6 +75,12 @@ All four tests pass.
 - Test run commands updated.
 - Calibration table updated to reflect correct Craig Ex. 9.1 values.
 
+### Follow-up verification
+- Export reconstruction helper restored in `api.py`, so slope PNG/PDF/DOCX export paths work again.
+- Slope plot renderer fixed for large circles and now includes a local ground-surface interpolation helper.
+- Near-flat dry slope regression is stable again, with adaptive quality filters that still protect against degenerate circles.
+- Regression coverage added for the export helper-backed heatmap path in `tests/test_api.py`.
+
 ---
 
 ## 2026-03-26
@@ -114,8 +120,8 @@ All four tests pass.
 - Rebuilt `.venv` with: `PySide6`, `numpy`, `matplotlib`, `pytest-qt`, `pyslope`.
 
 ### Known open issues
-- Some stable slope geometries return unrealistically large FoS values — next session continues in `core/search.py`, `core/slicer.py`, and `core/limit_equilibrium.py`.
-- `tests/test_pyslope_parity.py` parity gate currently highlights open Craig Ex. 9.1 mismatch.
+- No current slope-engine blocker is open after the March 31 follow-up fixes.
+- `tests/test_pyslope_parity.py` now passes and should remain a regression gate.
 
 ---
 

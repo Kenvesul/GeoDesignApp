@@ -313,6 +313,19 @@ def test_export_png_bytes():
     print("  PASS")
 
 
+def test_export_heatmap_png_bytes():
+    print("\n" + "="*60)
+    print("  TEST 13B â€” export_heatmap_png: returns PNG bytes (â‰¥ 10 kB)")
+    res = api.run_slope_analysis(SLOPE_PARAMS)
+    assert res["ok"]
+    png = api.export_heatmap_png(res, dpi=80)
+    assert isinstance(png, bytes), "Expected bytes"
+    assert png[:8] == b'\x89PNG\r\n\x1a\n', "Not a valid PNG"
+    assert len(png) >= 10_000, f"PNG too small: {len(png)} bytes"
+    print(f"  PNG size: {len(png):,} bytes  âœ“ valid PNG magic bytes")
+    print("  PASS")
+
+
 def test_export_pdf_file():
     print("\n" + "="*60)
     print("  TEST 14 â€” export_pdf: writes PDF â‰¥ 50 kB")
@@ -391,7 +404,6 @@ if __name__ == "__main__":
         print(f"  {failed} FAILED / {passed} passed.")
     print("="*60)
     sys.exit(failed)
-
 
 
 

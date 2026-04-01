@@ -82,6 +82,10 @@ standard schema:
 | `governing_mechanism` | str | `"circular"` or `"infinite_slope"` |
 | `critical_circle` | dict | `{cx, cy, r}` of the critical Bishop arc |
 
+The export helpers rebuild the stored critical circle from cached analysis
+data, so `export_slope_plot_png()`, `export_heatmap_png()`, `export_pdf()`,
+and `export_docx()` stay consistent without rerunning the full grid search.
+
 ---
 
 ## Quick start

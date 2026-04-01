@@ -203,6 +203,13 @@ def _infinite_slope_fos(slope: SlopeGeometry, soil: Soil, ru: float = 0.0) -> fl
     return fos_inf
 
 
+def _rebuild_search_result(
+    analysis: dict,
+    slope: SlopeGeometry,
+    soil: Soil,
+) -> SearchResult:
+
+
 
     """
     B-08 FIX: Reconstruct a SearchResult from the cached analysis dict.
@@ -227,13 +234,15 @@ def _infinite_slope_fos(slope: SlopeGeometry, soil: Soil, ru: float = 0.0) -> fl
     search_zone = _search_zone_from_analysis(analysis) or {}
     search_surface = analysis.get("search_surface", {})
 
+    num_slices = int(analysis.get("num_slices", len(analysis.get("slices", [])) or 20))
+
     # Re-run Bishop on the single critical circle (not a grid sweep)
-    slices = create_slices(slope, circ, soil, num_slices=20)
+    slices = create_slices(slope, circ, soil, num_slices=num_slices)
     fos_r  = bishop_simplified(slices, ru=ru)
 
     return SearchResult(
         critical_circle  = circ,
-        fos_min          = analysis.get("fos_char", fos_r.fos),
+        fos_min          = analysis.get("fos_char_circular", analysis.get("fos_char", fos_r.fos)),
         best_fos_result  = fos_r,
         fos_grid         = search_surface.get("fos_grid", []),
         cx_values        = cache.get("cx_values", [cc_d["cx"]]),

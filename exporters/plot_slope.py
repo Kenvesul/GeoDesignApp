@@ -43,6 +43,25 @@ _C_WATER    = "#AEC6CF"   # light blue -- water table (future)
 _ALPHA_FILL = 0.35
 
 
+def _ground_y_at_x(slope: SlopeGeometry, x: float) -> float:
+    """Piecewise-linear ground interpolation with end clamping."""
+    pts = slope.points
+    if x <= pts[0][0]:
+        return pts[0][1]
+    if x >= pts[-1][0]:
+        return pts[-1][1]
+
+    for (x1, y1), (x2, y2) in zip(pts, pts[1:]):
+        lo = min(x1, x2)
+        hi = max(x1, x2)
+        if lo <= x <= hi:
+            if abs(x2 - x1) < 1e-9:
+                return max(y1, y2)
+            t = (x - x1) / (x2 - x1)
+            return y1 + t * (y2 - y1)
+    return pts[-1][1]
+
+
 def plot_slope_stability(
     slope   : SlopeGeometry,
     result  : SearchResult,
@@ -121,8 +140,8 @@ def plot_slope_stability(
     import numpy as _np
     arc_xs = _np.linspace(x_entry, x_exit, n_arc)
     arc_ys = []
-    for ax in arc_xs:
-        disc = r**2 - (ax - cx)**2
+    for arc_x in arc_xs:
+        disc = r**2 - (arc_x - cx)**2
         if disc < 0:
             arc_ys.append(None)
         else:
@@ -130,17 +149,15 @@ def plot_slope_stability(
 
     # Plot as a single continuous segment (filter out None gaps)
     seg_x, seg_y = [], []
-    for ax, ay in zip(arc_xs, arc_ys):
-        if ay is None:
+    for arc_x, arc_y in zip(arc_xs, arc_ys):
+        if arc_y is None:
             if seg_x:
-                ax_plot, ay_plot = seg_x, seg_y
-                ax_plot_label = f"Critical circle (FoS={fos:.3f})"
                 ax.plot(seg_x, seg_y, color=_C_CIRCLE, linewidth=2.0,
                         linestyle="--", zorder=4)
                 seg_x, seg_y = [], []
         else:
-            seg_x.append(ax)
-            seg_y.append(ay)
+            seg_x.append(arc_x)
+            seg_y.append(arc_y)
 
     if seg_x:
         ax.plot(seg_x, seg_y, color=_C_CIRCLE, linewidth=2.5, linestyle="--",
@@ -164,7 +181,7 @@ def plot_slope_stability(
         for i in range(1, n_slices):
             xi = x_entry + i * dx_slice
             # Top: ground surface
-            y_top = _ground_y_at_x(xi)
+            y_top = _ground_y_at_x(slope, xi)
             # Bottom: circle surface
             disc = r**2 - (xi - cx)**2
             if disc < 0:

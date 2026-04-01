@@ -100,6 +100,57 @@ def _slope_direction(slope: SlopeGeometry) -> int:
     return -1 if dy > 0 else +1
 
 
+def _slope_profile_metrics(slope: SlopeGeometry) -> dict[str, float]:
+    """Geometry metrics reused by the search heuristics and quality filters."""
+    xs = [p[0] for p in slope.points]
+    ys = [p[1] for p in slope.points]
+
+    raw_height = max(ys) - min(ys)
+    height = max(raw_height, 1.0)
+    width = max(max(xs) - min(xs), 1.0)
+
+    steepest_face_len = 1.0
+    steepest_gradient = 0.0
+    for i in range(len(slope.points) - 1):
+        dx = abs(slope.points[i + 1][0] - slope.points[i][0])
+        dy = abs(slope.points[i + 1][1] - slope.points[i][1])
+        steepest_face_len = max(steepest_face_len, math.hypot(dx, dy))
+        if dx > 1e-9:
+            steepest_gradient = max(steepest_gradient, dy / dx)
+
+    return {
+        "raw_height": raw_height,
+        "height": height,
+        "width": width,
+        "steepest_face_len": steepest_face_len,
+        "steepest_gradient": steepest_gradient,
+        "slenderness": raw_height / max(width, 1e-9),
+    }
+
+
+def _adaptive_filter_params(slope: SlopeGeometry) -> dict[str, float]:
+    """
+    Relax geometric filters for shallow, broad profiles without disabling them.
+    """
+    metrics = _slope_profile_metrics(slope)
+    shallow_factor = max(0.0, min(1.0, (0.05 - metrics["slenderness"]) / 0.05))
+
+    return {
+        "max_base_angle_deg": _MAX_BASE_ANGLE_DEG + 12.5 * shallow_factor,
+        "min_span_fraction": max(0.10, _MIN_SPAN_FRACTION - 0.15 * shallow_factor),
+        "min_face_gradient": max(0.005, 0.05 - 0.045 * shallow_factor),
+        "face_margin_fraction": 0.10 + 0.25 * shallow_factor,
+        "max_bottom_depth": (
+            1.5 * metrics["height"]
+            + shallow_factor
+            * (
+                max(1.5 * metrics["steepest_face_len"], 0.20 * metrics["width"])
+                - 1.5 * metrics["height"]
+            )
+        ),
+    }
+
+
 def _auto_bounds(
     slope: SlopeGeometry,
 ) -> tuple[
@@ -131,21 +182,20 @@ def _auto_bounds(
     x_min, x_max = min(xs), max(xs)
     y_min, y_max = min(ys), max(ys)
 
-    H = max(y_max - y_min, 1.0)    # slope height (avoid zero)
-    W = max(x_max - x_min, 1.0)    # slope width
-
+    metrics = _slope_profile_metrics(slope)
+    H = metrics["height"]          # slope height (avoid zero)
     direction = _slope_direction(slope)  # +1 standard, -1 mirrored
 
     if direction >= 0:
         # Standard: descends left→right.  Centre should be above the left
         # portion of the slope; search from x_min−H to x_max+H.
-        cx_min = x_min - H
-        cx_max = x_max + H
+        cx_min = x_min - (1.0 * H)
+        cx_max = x_max + (0.75 * H)
     else:
         # Mirrored: descends right→left.  Centre should be above the right
         # portion; mirror the cx range.
-        cx_min = x_min - H
-        cx_max = x_max + H
+        cx_min = x_min - (0.75 * H)
+        cx_max = x_max + (1.0 * H)
 
     # cy must be above the highest point.  Upper bound is y_max + 5H,
     # which is sufficient for near-planar (very large R) mechanisms.
@@ -159,16 +209,8 @@ def _auto_bounds(
     # search does not need to reach R → ∞.
     #
     # Slope face length = sqrt(ΔX² + ΔY²) for the steepest segment.
-    slope_face_len = 1.0
-    for i in range(len(slope.points) - 1):
-        dx = abs(slope.points[i+1][0] - slope.points[i][0])
-        dy = abs(slope.points[i+1][1] - slope.points[i][1])
-        flen = math.sqrt(dx**2 + dy**2)
-        if flen > slope_face_len:
-            slope_face_len = flen
-
     r_min = 0.5 * H
-    r_max = max(3.0 * slope_face_len, 3.0 * H)
+    r_max = max(3.0 * metrics["steepest_face_len"], 3.0 * H)
 
     return (cx_min, cx_max), (cy_min, cy_max), (r_min, r_max)
 
@@ -304,8 +346,9 @@ def _evaluate_circle(
         )
 
     # ── Filter 3: extreme base angles ─────────────────────────────────────
+    filter_params = _adaptive_filter_params(slope)
     max_alpha = max(abs(math.degrees(s.alpha)) for s in slices)
-    if max_alpha > _MAX_BASE_ANGLE_DEG:
+    if max_alpha > filter_params["max_base_angle_deg"]:
         return CircleEvaluation(
             status="invalid_geometry",
             n_slices=len(slices),
@@ -321,7 +364,7 @@ def _evaluate_circle(
     xs = [s.x for s in slices]
     arc_span = max(xs) - min(xs)
     slope_width = max(slope.x_max - slope.x_min, 1e-9)
-    if arc_span < _MIN_SPAN_FRACTION * slope_width:
+    if arc_span < filter_params["min_span_fraction"] * slope_width:
         return CircleEvaluation(
             status="invalid_geometry",
             n_slices=len(slices),
@@ -342,14 +385,13 @@ def _evaluate_circle(
     #       arc barely touches the face at one edge but is mostly over the
     #       flat crest or toe — such circles are driven by the flat-region
     #       weight, not the slope face geometry.
-    _MIN_FACE_GRADIENT = 0.05  # rise/run; ignore nearly-flat segments
     inclined_xs: list[tuple[float, float]] = []
     for _i in range(len(slope.points) - 1):
         _x1, _y1 = slope.points[_i]
         _x2, _y2 = slope.points[_i + 1]
         _dx = abs(_x2 - _x1)
         _grad = abs(_y2 - _y1) / max(_dx, 1e-9)
-        if _grad >= _MIN_FACE_GRADIENT:
+        if _grad >= filter_params["min_face_gradient"]:
             inclined_xs.append((min(_x1, _x2), max(_x1, _x2)))
 
     if inclined_xs:
@@ -379,7 +421,7 @@ def _evaluate_circle(
         #     x-range of all inclined segments (expanded 10 % each side).
         face_lo = min(seg[0] for seg in inclined_xs)
         face_hi = max(seg[1] for seg in inclined_xs)
-        margin  = 0.10 * (face_hi - face_lo)
+        margin  = filter_params["face_margin_fraction"] * (face_hi - face_lo)
         if not (face_lo - margin <= arc_x_mid <= face_hi + margin):
             return CircleEvaluation(
                 status="invalid_geometry",
@@ -402,17 +444,15 @@ def _evaluate_circle(
     # degenerate deep-graben circles that produce spuriously low FoS.
     ys = [p[1] for p in slope.points]
     y_min_slope = min(ys)
-    y_max_slope = max(ys)
-    H_slope     = max(y_max_slope - y_min_slope, 1.0)
     arc_bottom  = circle.cy - circle.r
-    if arc_bottom < y_min_slope - 1.5 * H_slope:
+    if arc_bottom < y_min_slope - filter_params["max_bottom_depth"]:
         return CircleEvaluation(
             status="invalid_geometry",
             n_slices=len(slices),
             mass_area=mass_area,
             total_weight=total_weight,
             message=(
-                f"Circle bottom {arc_bottom:.2f} m is more than 1.5H ({1.5*H_slope:.2f} m) "
+                f"Circle bottom {arc_bottom:.2f} m is more than {filter_params['max_bottom_depth']:.2f} m "
                 f"below slope toe ({y_min_slope:.2f} m) — unrealistically deep failure surface."
             ),
         )
